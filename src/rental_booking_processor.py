@@ -1,6 +1,7 @@
 """Business rules for evaluating car rental requests."""
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from math import isfinite
 from typing import Any
 
 
@@ -16,7 +17,7 @@ class RentalBookingProcessor:
 
     def process_booking(
         self,
-        cars: Iterable[dict[str, Any]],
+        cars: Iterable[Mapping[str, Any]],
         client_age: int,
         has_license: bool,
         driving_experience_years: int,
@@ -24,9 +25,9 @@ class RentalBookingProcessor:
         budget: float,
         min_seats_needed: int,
     ) -> list[dict[str, Any]] | str:
-        """Return eligible cars with prices, or a validation/status message.
+        """Return eligible vehicles or a validation/status message.
 
-        The result format is retained for compatibility with existing callers.
+        Invalid vehicle entries are skipped; invalid requests are rejected.
         """
         error = self._validate_request(
             client_age,
@@ -39,6 +40,9 @@ class RentalBookingProcessor:
         if error is not None:
             return error
 
+        if not isinstance(cars, Iterable) or isinstance(cars, (str, bytes, Mapping)):
+            return "Invalid cars collection"
+
         available_options: list[dict[str, Any]] = []
         for car in cars:
             if not self._passes_vehicle_filters(
@@ -47,6 +51,8 @@ class RentalBookingProcessor:
                 continue
 
             total_price = self._calculate_total_price(car, client_age, rental_days)
+            if isinstance(total_price, float) and not isfinite(total_price):
+                continue
             if total_price > budget:
                 continue
 
@@ -62,7 +68,23 @@ class RentalBookingProcessor:
         return available_options
 
     @staticmethod
+    def _is_integer(value: object) -> bool:
+        """Accept integer values, but not booleans (which subclass int)."""
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    @staticmethod
+    def _is_positive_amount(value: object) -> bool:
+        """Accept positive finite int/float amounts, excluding booleans."""
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value > 0
+            and (not isinstance(value, float) or isfinite(value))
+        )
+
+    @classmethod
     def _validate_request(
+        cls,
         client_age: int,
         has_license: bool,
         driving_experience_years: int,
@@ -70,34 +92,52 @@ class RentalBookingProcessor:
         budget: float,
         min_seats_needed: int,
     ) -> str | None:
-        """Check request values in the original validation order."""
+        """Validate request values while keeping existing error messages."""
+        if not cls._is_integer(client_age):
+            return "Invalid client age"
         if client_age < 18:
             return "Client is underage"
+        if not isinstance(has_license, bool):
+            return "Invalid license status"
         if not has_license:
             return "Client has no valid license"
-        if driving_experience_years < 0:
+        if (
+            not cls._is_integer(driving_experience_years)
+            or driving_experience_years < 0
+        ):
             return "Invalid driving experience"
-        if rental_days <= 0:
+        if not cls._is_integer(rental_days) or rental_days <= 0:
             return "Invalid rental period"
-        if budget <= 0:
+        if not cls._is_positive_amount(budget):
             return "Invalid budget"
-        if min_seats_needed <= 0:
+        if not cls._is_integer(min_seats_needed) or min_seats_needed <= 0:
             return "Invalid seat requirement"
         return None
 
     def _passes_vehicle_filters(
         self,
-        car: dict[str, Any],
+        car: Mapping[str, Any],
         client_age: int,
         driving_experience_years: int,
         min_seats_needed: int,
     ) -> bool:
-        """Check vehicle data, availability, seats and horsepower restrictions."""
-        if not self.REQUIRED_CAR_FIELDS.issubset(car):
+        """Check required vehicle fields and all eligibility-related filters."""
+        if not isinstance(car, Mapping) or not self.REQUIRED_CAR_FIELDS.issubset(car):
             return False
-        if car["category"] not in self.VALID_CATEGORIES:
+        if not isinstance(car["model"], str) or not car["model"].strip():
             return False
-        if not car["available"]:
+        if (
+            not isinstance(car["category"], str)
+            or car["category"] not in self.VALID_CATEGORIES
+        ):
+            return False
+        if not isinstance(car["available"], bool) or not car["available"]:
+            return False
+        if not self._is_integer(car["seats"]) or car["seats"] <= 0:
+            return False
+        if not self._is_integer(car["horsepower"]) or car["horsepower"] <= 0:
+            return False
+        if not self._is_positive_amount(car["price_per_day"]):
             return False
         if car["seats"] < min_seats_needed:
             return False
@@ -107,7 +147,7 @@ class RentalBookingProcessor:
         )
 
     def _calculate_total_price(
-        self, car: dict[str, Any], client_age: int, rental_days: int
+        self, car: Mapping[str, Any], client_age: int, rental_days: int
     ) -> float:
         """Calculate the total amount, including the young-driver surcharge."""
         base_price = car["price_per_day"] * rental_days
@@ -118,7 +158,7 @@ class RentalBookingProcessor:
 
     @staticmethod
     def _meets_category_requirements(
-        car: dict[str, Any], client_age: int, driving_experience_years: int
+        car: Mapping[str, Any], client_age: int, driving_experience_years: int
     ) -> bool:
         """Apply stricter age and experience requirements to premium cars."""
         if car["category"] == "premium":
@@ -126,8 +166,8 @@ class RentalBookingProcessor:
         return client_age >= 18 and driving_experience_years >= 1
 
     @staticmethod
-    def _build_option(car: dict[str, Any], total_price: float) -> dict[str, Any]:
-        """Return the established public response structure."""
+    def _build_option(car: Mapping[str, Any], total_price: float) -> dict[str, Any]:
+        """Return the existing public response structure."""
         return {
             "model": car["model"],
             "category": car["category"],
