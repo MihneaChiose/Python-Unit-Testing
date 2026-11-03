@@ -2,7 +2,15 @@
 
 from collections.abc import Iterable, Mapping
 from math import isfinite
-from typing import Any
+from typing import Any, ClassVar
+
+from .models import (
+    BookingError,
+    BookingErrorCode,
+    BookingOption,
+    BookingRequest,
+    BookingResult,
+)
 
 
 class RentalBookingProcessor:
@@ -12,6 +20,18 @@ class RentalBookingProcessor:
         {"model", "category", "price_per_day", "available", "horsepower", "seats"}
     )
     VALID_CATEGORIES = frozenset({"economy", "standard", "premium"})
+    ERROR_CODES: ClassVar[dict[str, BookingErrorCode]] = {
+        "Invalid client age": BookingErrorCode.INVALID_CLIENT_AGE,
+        "Client is underage": BookingErrorCode.UNDERAGE,
+        "Invalid license status": BookingErrorCode.INVALID_LICENSE_STATUS,
+        "Client has no valid license": BookingErrorCode.NO_LICENSE,
+        "Invalid driving experience": BookingErrorCode.INVALID_DRIVING_EXPERIENCE,
+        "Invalid rental period": BookingErrorCode.INVALID_RENTAL_PERIOD,
+        "Invalid budget": BookingErrorCode.INVALID_BUDGET,
+        "Invalid seat requirement": BookingErrorCode.INVALID_SEAT_REQUIREMENT,
+        "Invalid cars collection": BookingErrorCode.INVALID_CARS_COLLECTION,
+        "No cars available for this client": BookingErrorCode.NO_ELIGIBLE_CARS,
+    }
     YOUNG_DRIVER_FEE_PER_DAY = 20
     RESTRICTED_DRIVER_MAX_HORSEPOWER = 120
 
@@ -66,6 +86,33 @@ class RentalBookingProcessor:
         if not available_options:
             return "No cars available for this client"
         return available_options
+
+    def evaluate_booking(self, request: BookingRequest) -> BookingResult:
+        """Return a typed result while reusing the tested legacy business rules.
+
+        This is a transitional adapter: ``process_booking`` keeps its existing
+        signature and output for callers and tests that already depend on it.
+        """
+        legacy_result = self.process_booking(
+            cars=(car.to_mapping() for car in request.cars),
+            client_age=request.client_age,
+            has_license=request.has_license,
+            driving_experience_years=request.driving_experience_years,
+            rental_days=request.rental_days,
+            budget=request.budget,
+            min_seats_needed=request.min_seats_needed,
+        )
+        if isinstance(legacy_result, str):
+            return BookingResult(
+                options=(),
+                error=BookingError(
+                    code=self.ERROR_CODES.get(legacy_result, BookingErrorCode.UNKNOWN),
+                    message=legacy_result,
+                ),
+            )
+        return BookingResult(
+            options=tuple(BookingOption(**option) for option in legacy_result)
+        )
 
     @staticmethod
     def _is_integer(value: object) -> bool:
