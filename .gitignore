@@ -1,4 +1,5 @@
-# Python bytecode
+
+# Python bytecode and cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -9,16 +10,27 @@ venv/
 env/
 ENV/
 
+# Python packaging
+build/
+dist/
+*.egg-info/
+
 # Pytest
 .pytest_cache/
 
 # Coverage reports
 .coverage
+.coverage.*
 htmlcov/
 coverage.xml
 
 # Mutation testing
 session.sqlite
+mutation-results/
+
+# Linters and type checkers
+.ruff_cache/
+.mypy_cache/
 
 # IDEs and editors
 .vscode/
